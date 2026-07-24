@@ -109,6 +109,19 @@ if "focus_log" not in st.session_state:
 if "review_items" not in st.session_state:
     st.session_state.review_items = []
 
+if "exams" not in st.session_state:
+    st.session_state.exams = []  # list of {"name": str, "date": "YYYY-MM-DD", "subject": str}
+
+if "leaderboard" not in st.session_state:
+    # Simulated leaderboard with sample students
+    st.session_state.leaderboard = [
+        {"name": "Alex", "streak": 12, "total_min": 3600, "points": 410},
+        {"name": "Jordan", "streak": 8, "total_min": 2400, "points": 290},
+        {"name": "Sam", "streak": 5, "total_min": 1500, "points": 180},
+        {"name": "Taylor", "streak": 3, "total_min": 900, "points": 110},
+        {"name": "You", "streak": 0, "total_min": 0, "points": 0},
+    ]
+
 # ---------------------------------------------------------------------------
 # Efficiency Profiles
 # ---------------------------------------------------------------------------
@@ -502,7 +515,108 @@ def create_tools():
                       "", "🔔 Added to your review reminder system!"])
         return "\n".join(lines)
 
-    return [optimize_study_schedule, anti_procrastination_plan, smart_prioritize, spaced_repetition_plan]
+    @tool
+    def weekly_summary_report() -> str:
+        """Generate an AI-powered weekly study report with insights and recommendations.
+
+        Analyzes the user's study history, streak data, efficiency patterns, and
+        upcoming exams to produce a comprehensive weekly summary with trends,
+        achievements, and personalized improvement suggestions.
+
+        Returns:
+            A detailed weekly study report with analytics and next-week recommendations.
+        """
+        history = streak_data["history"]
+        current_streak = streak_data["current_streak"]
+        total_min = streak_data["total_minutes"]
+        total_sessions = streak_data["total_sessions"]
+
+        # Get last 7 days of data
+        today = datetime.date.today()
+        week_ago = today - datetime.timedelta(days=7)
+        week_data = [
+            h for h in history
+            if datetime.datetime.strptime(h["date"], "%Y-%m-%d").date() > week_ago
+        ]
+
+        week_minutes = sum(h["minutes"] for h in week_data)
+        week_days_active = len(week_data)
+        avg_daily = week_minutes / max(week_days_active, 1)
+
+        # Exam countdown info
+        exams = st.session_state.get("exams", [])
+        upcoming_exams = []
+        for exam in exams:
+            exam_date = datetime.datetime.strptime(exam["date"], "%Y-%m-%d").date()
+            days_left = (exam_date - today).days
+            if days_left >= 0:
+                upcoming_exams.append({"name": exam["name"], "days_left": days_left})
+        upcoming_exams.sort(key=lambda x: x["days_left"])
+
+        lines = [
+            "📊 WEEKLY STUDY REPORT",
+            f"📅 Week ending: {today.strftime('%Y-%m-%d')}",
+            "", "═" * 40, "",
+            "📈 This Week's Stats:",
+            f"  • Days active: {week_days_active}/7",
+            f"  • Total study time: {week_minutes} min ({week_minutes/60:.1f}h)",
+            f"  • Daily average: {avg_daily:.0f} min",
+            f"  • Current streak: {current_streak} days",
+            f"  • Total Pomodoros (est.): {week_minutes // 25}",
+            "",
+        ]
+
+        # Performance assessment
+        if avg_daily >= 120:
+            grade = "⭐ EXCELLENT"
+            comment = "Outstanding week! You're building strong habits."
+        elif avg_daily >= 60:
+            grade = "👍 GOOD"
+            comment = "Solid effort! Try adding one more Pomodoro per day next week."
+        elif avg_daily >= 30:
+            grade = "📈 IMPROVING"
+            comment = "You're making progress. Consistency is key — keep showing up!"
+        else:
+            grade = "💪 GETTING STARTED"
+            comment = "Every minute counts. Aim for at least 2 Pomodoros tomorrow."
+
+        lines.extend([
+            f"🏆 Performance: {grade}",
+            f"   {comment}",
+            "",
+        ])
+
+        # Upcoming exams
+        if upcoming_exams:
+            lines.append("🎓 Upcoming Exams:")
+            for exam in upcoming_exams[:5]:
+                urgency = "🚨" if exam["days_left"] <= 3 else "⚠️" if exam["days_left"] <= 7 else "📌"
+                lines.append(f"  {urgency} {exam['name']} — {exam['days_left']} days left")
+            lines.append("")
+
+        # Recommendations
+        lines.extend([
+            "─" * 40, "",
+            "🎯 Recommendations for Next Week:",
+        ])
+
+        if week_days_active < 5:
+            lines.append(f"  • Aim for at least {week_days_active + 2} active days")
+        if avg_daily < 60:
+            lines.append("  • Target: 2-3 Pomodoros per day (50-75 min)")
+        if upcoming_exams and upcoming_exams[0]["days_left"] <= 7:
+            lines.append(f"  • Priority: Start intensive review for {upcoming_exams[0]['name']}")
+        lines.extend([
+            "  • Use peak efficiency hours for hardest subjects",
+            "  • Don't forget spaced repetition reviews!",
+            "",
+            f"💡 Efficiency Profile: {efficiency_type}",
+            "   Make sure to study during your peak hours for best results.",
+        ])
+
+        return "\n".join(lines)
+
+    return [optimize_study_schedule, anti_procrastination_plan, smart_prioritize, spaced_repetition_plan, weekly_summary_report]
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -725,7 +839,9 @@ with st.sidebar:
 
 st.title("⏰ Time Optimizer Pro")
 
-tab_chat, tab_heatmap, tab_analytics = st.tabs(["💬 AI Assistant", "📅 Weekly Heatmap", "📊 Focus Analytics"])
+tab_chat, tab_heatmap, tab_analytics, tab_exams, tab_leaderboard = st.tabs(
+    ["💬 AI Assistant", "📅 Weekly Heatmap", "📊 Focus Analytics", "🎓 Exam Countdown", "🏆 Leaderboard"]
+)
 
 # ---------------------------------------------------------------------------
 # Tab 1: Chat
@@ -788,7 +904,8 @@ with tab_chat:
                         "1. optimize_study_schedule - study scheduling / free time / timetable\n"
                         "2. anti_procrastination_plan - procrastination / deadlines / planning\n"
                         "3. smart_prioritize - task sorting / priority / multiple tasks\n"
-                        "4. spaced_repetition_plan - review / memory / Ebbinghaus\n\n"
+                        "4. spaced_repetition_plan - review / memory / Ebbinghaus\n"
+                        "5. weekly_summary_report - weekly report / progress / how am I doing\n\n"
                         "Rules:\n"
                         "- Reply in English, concise and motivational\n"
                         "- Choose the appropriate tool based on user intent\n"
@@ -955,3 +1072,154 @@ with tab_analytics:
             st.progress(progress, text=f"{next_milestone - points} pts to next reward")
 
         st.caption("🎁 100pts=🎬Movie | 200pts=🍰Nice meal | 500pts=🎮Gaming | 1000pts=🎉Gift")
+
+# ---------------------------------------------------------------------------
+# Tab 4: Exam Countdown
+# ---------------------------------------------------------------------------
+
+with tab_exams:
+    st.subheader("🎓 Exam Countdown")
+
+    # Add exam form
+    with st.expander("➕ Add Exam", expanded=not bool(st.session_state.exams)):
+        ecol1, ecol2 = st.columns(2)
+        with ecol1:
+            exam_name = st.text_input("Exam name:", key="exam_name_input", placeholder="e.g. Calculus Final")
+        with ecol2:
+            exam_subject = st.text_input("Subject:", key="exam_subject_input", placeholder="e.g. Calculus")
+        exam_date = st.date_input(
+            "Exam date:",
+            value=datetime.date.today() + datetime.timedelta(days=14),
+            min_value=datetime.date.today(),
+            key="exam_date_input",
+        )
+        if st.button("Add Exam", key="add_exam_btn"):
+            if exam_name.strip():
+                st.session_state.exams.append({
+                    "name": exam_name.strip(),
+                    "date": exam_date.strftime("%Y-%m-%d"),
+                    "subject": exam_subject.strip() or exam_name.strip(),
+                })
+                st.success(f"Added: {exam_name}")
+                st.rerun()
+
+    if not st.session_state.exams:
+        st.info("No exams added yet. Add your upcoming exams to see countdown timers!")
+    else:
+        # Sort exams by date
+        today = datetime.date.today()
+        sorted_exams = sorted(
+            st.session_state.exams,
+            key=lambda x: datetime.datetime.strptime(x["date"], "%Y-%m-%d").date()
+        )
+
+        for i, exam in enumerate(sorted_exams):
+            exam_date = datetime.datetime.strptime(exam["date"], "%Y-%m-%d").date()
+            days_left = (exam_date - today).days
+
+            if days_left < 0:
+                continue  # skip past exams
+
+            # Color coding based on urgency
+            if days_left <= 3:
+                color = "#e74c3c"
+                urgency = "🚨 CRITICAL"
+            elif days_left <= 7:
+                color = "#f39c12"
+                urgency = "⚠️ SOON"
+            elif days_left <= 14:
+                color = "#3498db"
+                urgency = "📌 UPCOMING"
+            else:
+                color = "#27ae60"
+                urgency = "✅ PLANNED"
+
+            col1, col2, col3 = st.columns([3, 2, 1])
+            with col1:
+                st.markdown(f"**{exam['name']}** ({exam['subject']})")
+                st.caption(f"Date: {exam['date']}")
+            with col2:
+                st.markdown(
+                    f"<div style='background:{color}; color:white; padding:10px; "
+                    f"border-radius:10px; text-align:center; font-weight:bold;'>"
+                    f"{days_left} days left<br><span style='font-size:0.8em;'>{urgency}</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with col3:
+                if st.button("🗑️", key=f"del_exam_{i}"):
+                    st.session_state.exams = [e for e in st.session_state.exams if e != exam]
+                    st.rerun()
+
+            # Study recommendation
+            if days_left <= 7:
+                hours_needed = max(2, days_left * 2)
+                pomodoros_per_day = max(2, hours_needed // days_left) if days_left > 0 else 8
+                st.caption(f"   💡 Suggestion: ~{pomodoros_per_day} Pomodoros/day for {exam['subject']}")
+
+            st.markdown("---")
+
+# ---------------------------------------------------------------------------
+# Tab 5: Leaderboard
+# ---------------------------------------------------------------------------
+
+with tab_leaderboard:
+    st.subheader("🏆 Study Leaderboard")
+    st.caption("Compare your progress with other students!")
+
+    # Update "You" entry in leaderboard with current data
+    streak = st.session_state.study_streak
+    my_points = streak["total_sessions"] * 10 + streak["current_streak"] * 5
+
+    for entry in st.session_state.leaderboard:
+        if entry["name"] == "You":
+            entry["streak"] = streak["current_streak"]
+            entry["total_min"] = streak["total_minutes"]
+            entry["points"] = my_points
+
+    # Sort by points
+    sorted_board = sorted(st.session_state.leaderboard, key=lambda x: x["points"], reverse=True)
+
+    # Display leaderboard
+    for rank, entry in enumerate(sorted_board, 1):
+        is_you = entry["name"] == "You"
+
+        if rank == 1:
+            medal = "🥇"
+        elif rank == 2:
+            medal = "🥈"
+        elif rank == 3:
+            medal = "🥉"
+        else:
+            medal = f"#{rank}"
+
+        bg_color = "rgba(102, 126, 234, 0.1)" if is_you else "transparent"
+        border = "2px solid #667eea" if is_you else "1px solid #eee"
+        name_display = f"**{entry['name']}** 👈" if is_you else entry["name"]
+
+        col1, col2, col3, col4 = st.columns([1, 3, 2, 2])
+        with col1:
+            st.markdown(f"### {medal}")
+        with col2:
+            st.markdown(name_display)
+            st.caption(f"🔥 {entry['streak']} day streak")
+        with col3:
+            hours = entry["total_min"] / 60
+            st.metric("Study Time", f"{hours:.1f}h", label_visibility="collapsed")
+        with col4:
+            st.metric("Points", f"{entry['points']} pts", label_visibility="collapsed")
+
+        if is_you and rank > 1:
+            pts_to_next = sorted_board[rank - 2]["points"] - entry["points"]
+            if pts_to_next > 0:
+                st.caption(f"   📈 {pts_to_next} more points to rank up!")
+
+        st.markdown("---")
+
+    # Motivational footer
+    my_rank = next((i + 1 for i, e in enumerate(sorted_board) if e["name"] == "You"), len(sorted_board))
+    if my_rank == 1:
+        st.success("🎉 You're #1! Keep up the amazing work!")
+    elif my_rank <= 3:
+        st.info(f"🔥 You're #{my_rank}! So close to the top — keep going!")
+    else:
+        st.warning(f"💪 You're #{my_rank}. Check in daily and use Pomodoros to climb the ranks!")
